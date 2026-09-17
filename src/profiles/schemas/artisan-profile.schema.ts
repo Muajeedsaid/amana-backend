@@ -15,6 +15,21 @@ export class SocialMedia {
   tiktok: string;
 }
 
+@Schema({ _id: false })
+export class CustomOffering {
+  @Prop({ required: true })
+  name: string;
+
+  @Prop({ required: true })
+  category: string;
+
+  @Prop({ default: '' })
+  description: string;
+
+  @Prop({ default: 'pending', enum: ['pending', 'approved'] })
+  status: string;
+}
+
 @Schema({ timestamps: true })
 export class ArtisanProfile {
   @Prop({ required: true, type: Types.ObjectId, ref: 'User', unique: true })
@@ -61,6 +76,54 @@ export class ArtisanProfile {
 
   @Prop({ type: SocialMedia, default: () => ({}) })
   socialMedia: SocialMedia;
+
+  /* ---- identity ---- */
+
+  @Prop({ default: '' })
+  avatarUrl: string;
+
+  @Prop({ default: '' })
+  fullName: string;
+
+  @Prop({ default: '' })
+  businessName: string;
+
+  @Prop({ default: '' })
+  phone: string;
+
+  @Prop({ default: '' })
+  whatsapp: string;
+
+  @Prop({ default: 'Kano' })
+  city: string;
+
+  @Prop({ default: '' })
+  area: string;
+
+  /* ---- what they offer ---- */
+
+  @Prop({ default: 'services', enum: ['services', 'products', 'both'] })
+  offerType: string;
+
+  @Prop({ default: [] })
+  serviceIds: string[];
+
+  @Prop({ default: [] })
+  productIds: string[];
+
+  @Prop({ type: [CustomOffering], default: [] })
+  customOfferings: CustomOffering[];
+
+  /* ---- hours ---- */
+
+  @Prop({ default: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] })
+  workingDays: string[];
+
+  @Prop({ default: '08:00' })
+  openFrom: string;
+
+  @Prop({ default: '18:00' })
+  openTo: string;
 }
 
 export const ArtisanProfileSchema = SchemaFactory.createForClass(ArtisanProfile);

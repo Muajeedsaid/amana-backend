@@ -80,6 +80,23 @@ export class ProfilesService {
     if (dto.isAvailable !== undefined) profile.isAvailable = dto.isAvailable;
     if (dto.socialMedia !== undefined) profile.socialMedia = dto.socialMedia as any;
 
+    if (dto.avatarUrl !== undefined) profile.avatarUrl = dto.avatarUrl;
+    if (dto.fullName !== undefined) profile.fullName = dto.fullName;
+    if (dto.businessName !== undefined) profile.businessName = dto.businessName;
+    if (dto.phone !== undefined) profile.phone = dto.phone;
+    if (dto.whatsapp !== undefined) profile.whatsapp = dto.whatsapp;
+    if (dto.city !== undefined) profile.city = dto.city;
+    if (dto.area !== undefined) profile.area = dto.area;
+
+    if (dto.offerType !== undefined) profile.offerType = dto.offerType;
+    if (dto.serviceIds !== undefined) profile.serviceIds = dto.serviceIds;
+    if (dto.productIds !== undefined) profile.productIds = dto.productIds;
+    if (dto.customOfferings !== undefined) profile.customOfferings = dto.customOfferings as any;
+
+    if (dto.workingDays !== undefined) profile.workingDays = dto.workingDays;
+    if (dto.openFrom !== undefined) profile.openFrom = dto.openFrom;
+    if (dto.openTo !== undefined) profile.openTo = dto.openTo;
+
     return profile.save();
   }
 
