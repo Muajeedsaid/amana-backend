@@ -16,6 +16,16 @@ export class EmailService {
       throw new Error('Missing required email config (BREVO_API_KEY, FRONTEND_URL_FOR_EMAILS, or BREVO_FROM_EMAIL)');
     }
 
+    // TEMPORARY DIAGNOSTIC LOG — remove once the real issue is found.
+    // Logs the shape of the key without exposing the full secret, so we
+    // can rule out a corrupted/truncated env var (extra whitespace, a
+    // stray quote character copied in from .env, wrong length, etc.)
+    // without ever printing the actual key into Render's logs.
+    this.logger.log(
+      `[DIAGNOSTIC] API key length: ${apiKey.length}, starts with: "${apiKey.slice(0, 12)}", ends with: "${apiKey.slice(-6)}", has whitespace: ${/\s/.test(apiKey)}`
+    );
+    this.logger.log(`[DIAGNOSTIC] fromEmail: "${fromEmail}", frontendUrl: "${frontendUrl}"`);
+
     const verifyUrl = `${frontendUrl}/verify-email?token=${token}`;
 
     const htmlContent = `
@@ -49,9 +59,18 @@ export class EmailService {
         }),
       });
 
+      // TEMPORARY DIAGNOSTIC LOG — this is the key one. Brevo's real
+      // success response always includes a "messageId" field. If this
+      // logs something that ISN'T a real Brevo messageId, or the status
+      // code looks wrong, that tells us the request isn't landing where
+      // we think it is.
+      const responseText = await response.text();
+      this.logger.log(
+        `[DIAGNOSTIC] Brevo responded — status: ${response.status}, ok: ${response.ok}, body: ${responseText}`
+      );
+
       if (!response.ok) {
-        const errorBody = await response.text();
-        throw new Error(`Brevo API responded with ${response.status}: ${errorBody}`);
+        throw new Error(`Brevo API responded with ${response.status}: ${responseText}`);
       }
 
       this.logger.log(`Verification email sent to ${to}`);
