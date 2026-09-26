@@ -1,30 +1,62 @@
 import { Injectable, Logger, InternalServerErrorException } from '@nestjs/common';
+import * as nodemailer from 'nodemailer';
 
+/**
+ * Sends transactional email directly through Gmail's own SMTP servers,
+ * using an App Password (GMAIL_USER + GMAIL_APP_PASSWORD), instead of
+ * through a third-party ESP like Brevo.
+ *
+ * Why this fixes the delivery problem for good, with no domain purchase:
+ *
+ * Gmail enforces a strict DMARC policy for @gmail.com — any email
+ * claiming "From: someone@gmail.com" that wasn't actually sent through
+ * Google's own servers gets silently rejected by receiving mail
+ * providers (including Gmail itself). That's exactly what was
+ * happening via Brevo: Brevo's API accepted the request and returned a
+ * real messageId, but delivery was rejected downstream because Brevo
+ * isn't Google.
+ *
+ * Sending through smtp.gmail.com directly sidesteps this entirely —
+ * the email genuinely is sent by Google's infrastructure, so DMARC
+ * passes normally, exactly like any regular email you send from Gmail
+ * in a browser.
+ *
+ * Limits to know about: a personal Gmail account can send roughly
+ * 500 emails/day through SMTP (a Google Workspace account gets more).
+ * Fine for testing and an early launch; worth moving to a properly
+ * authenticated domain + ESP (Brevo, SES, etc.) once volume grows.
+ */
 @Injectable()
 export class EmailService {
   private readonly logger = new Logger(EmailService.name);
+  private transporter: nodemailer.Transporter;
 
-  async sendVerificationEmail(to: string, token: string): Promise<void> {
-    const apiKey = process.env.BREVO_API_KEY;
-    const frontendUrl = process.env.FRONTEND_URL_FOR_EMAILS;
-    const fromEmail = process.env.BREVO_FROM_EMAIL;
+  constructor() {
+    const user = process.env.GMAIL_USER;
+    const pass = process.env.GMAIL_APP_PASSWORD;
 
-    if (!apiKey || !frontendUrl || !fromEmail) {
+    if (!user || !pass) {
       this.logger.error(
-        `Missing email config — apiKey: ${!!apiKey}, frontendUrl: ${!!frontendUrl}, fromEmail: ${!!fromEmail}`
+        `Missing Gmail SMTP config — GMAIL_USER: ${!!user}, GMAIL_APP_PASSWORD: ${!!pass}`,
       );
-      throw new Error('Missing required email config (BREVO_API_KEY, FRONTEND_URL_FOR_EMAILS, or BREVO_FROM_EMAIL)');
+      return;
     }
 
-    // TEMPORARY DIAGNOSTIC LOG — remove once the real issue is found.
-    // Logs the shape of the key without exposing the full secret, so we
-    // can rule out a corrupted/truncated env var (extra whitespace, a
-    // stray quote character copied in from .env, wrong length, etc.)
-    // without ever printing the actual key into Render's logs.
-    this.logger.log(
-      `[DIAGNOSTIC] API key length: ${apiKey.length}, starts with: "${apiKey.slice(0, 12)}", ends with: "${apiKey.slice(-6)}", has whitespace: ${/\s/.test(apiKey)}`
-    );
-    this.logger.log(`[DIAGNOSTIC] fromEmail: "${fromEmail}", frontendUrl: "${frontendUrl}"`);
+    this.transporter = nodemailer.createTransport({
+      service: 'gmail',
+      auth: { user, pass },
+    });
+  }
+
+  async sendVerificationEmail(to: string, token: string): Promise<void> {
+    const user = process.env.GMAIL_USER;
+    const frontendUrl = process.env.FRONTEND_URL_FOR_EMAILS;
+
+    if (!this.transporter || !user || !frontendUrl) {
+      throw new Error(
+        'Missing required email config (GMAIL_USER, GMAIL_APP_PASSWORD, or FRONTEND_URL_FOR_EMAILS)',
+      );
+    }
 
     const verifyUrl = `${frontendUrl}/verify-email?token=${token}`;
 
@@ -43,39 +75,20 @@ export class EmailService {
     `;
 
     try {
-      const response = await fetch('https://api.brevo.com/v3/smtp/email', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-          'api-key': apiKey,
-        },
-        body: JSON.stringify({
-          sender: { email: fromEmail, name: 'Amana' },
-          to: [{ email: to }],
-          subject: 'Verify your Amana account',
-          htmlContent,
-          textContent: `Welcome to Amana. Verify your email: ${verifyUrl}`,
-        }),
+      const info = await this.transporter.sendMail({
+        from: `"Amana" <${user}>`,
+        to,
+        subject: 'Verify your Amana account',
+        html: htmlContent,
+        text: `Welcome to Amana. Verify your email: ${verifyUrl}`,
       });
 
-      // TEMPORARY DIAGNOSTIC LOG — this is the key one. Brevo's real
-      // success response always includes a "messageId" field. If this
-      // logs something that ISN'T a real Brevo messageId, or the status
-      // code looks wrong, that tells us the request isn't landing where
-      // we think it is.
-      const responseText = await response.text();
-      this.logger.log(
-        `[DIAGNOSTIC] Brevo responded — status: ${response.status}, ok: ${response.ok}, body: ${responseText}`
-      );
-
-      if (!response.ok) {
-        throw new Error(`Brevo API responded with ${response.status}: ${responseText}`);
-      }
-
-      this.logger.log(`Verification email sent to ${to}`);
+      this.logger.log(`Verification email sent to ${to} (messageId: ${info.messageId})`);
     } catch (err) {
-      this.logger.error(`Failed to send verification email to ${to}`, err instanceof Error ? err.stack : err);
+      this.logger.error(
+        `Failed to send verification email to ${to}`,
+        err instanceof Error ? err.stack : err,
+      );
       throw new InternalServerErrorException('Failed to send verification email');
     }
   }
