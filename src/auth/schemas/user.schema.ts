@@ -8,23 +8,11 @@ export class User {
   @Prop({ required: true, unique: true })
   phone: string;
 
-  @Prop({ required: true, unique: true })
-  email: string;
-
   @Prop({ required: true })
   passwordHash: string;
 
   @Prop({ required: true, enum: ['customer', 'artisan', 'apprentice', 'admin'] })
   role: string;
-
-  @Prop({ default: false })
-  isVerified: boolean;
-
-  @Prop()
-  emailVerificationToken?: string;
-
-  @Prop()
-  emailVerificationExpires?: Date;
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);
