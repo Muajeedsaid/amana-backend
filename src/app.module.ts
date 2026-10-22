@@ -11,6 +11,7 @@ import { SearchModule } from './search/search.module';
 import { BookingsModule } from './bookings/bookings.module';
 import { ReviewsModule } from './reviews/reviews.module';
 import { UploadsModule } from './uploads/uploads.module';
+import { MessagesModule } from './messages/messages.module';
 
 @Module({
   imports: [
@@ -31,6 +32,7 @@ import { UploadsModule } from './uploads/uploads.module';
     BookingsModule,
     ReviewsModule,
     UploadsModule,
+    MessagesModule,
   ],
   controllers: [AppController],
   providers: [AppService],
