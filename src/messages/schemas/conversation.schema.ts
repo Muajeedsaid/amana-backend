@@ -35,6 +35,13 @@ export class Conversation {
   /** Messages the artisan has not opened yet (sent by the customer). */
   @Prop({ default: 0 })
   artisanUnread: number;
+
+  /** "Delete chat": everything up to this moment is hidden for that side only. */
+  @Prop({ type: Date })
+  customerClearedAt?: Date;
+
+  @Prop({ type: Date })
+  artisanClearedAt?: Date;
 }
 
 export const ConversationSchema = SchemaFactory.createForClass(Conversation);

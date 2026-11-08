@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Request, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Request, UseGuards } from '@nestjs/common';
 import { MessagesService } from './messages.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { SendMessageDto } from './dto/send-message.dto';
@@ -50,5 +50,35 @@ export class MessagesController {
   @Post('conversations/:id/messages')
   reply(@Request() req, @Param('id') id: string, @Body() dto: SendMessageDto) {
     return this.messagesService.reply(req.user.userId, id, dto.text);
+  }
+
+  /** Delete the whole chat for both sides. */
+  @Post('conversations/:id/delete-all')
+  removeConversationForAll(@Request() req, @Param('id') id: string) {
+    return this.messagesService.deleteConversationForEveryone(req.user.userId, id);
+  }
+
+  /** Delete one message for me only. */
+  @Post('items/:id/delete')
+  removeMessage(@Request() req, @Param('id') id: string) {
+    return this.messagesService.deleteMessageForMe(req.user.userId, id);
+  }
+
+  /** Delete one message for everyone (sender only). */
+  @Post('items/:id/delete-all')
+  removeMessageForAll(@Request() req, @Param('id') id: string) {
+    return this.messagesService.deleteMessageForEveryone(req.user.userId, id);
+  }
+
+  /** Same as DELETE, but as a POST so strict CORS settings (no DELETE method) cannot block it. */
+  @Post('conversations/:id/delete')
+  removePost(@Request() req, @Param('id') id: string) {
+    return this.messagesService.deleteForMe(req.user.userId, id);
+  }
+
+  /** Delete the chat for me only. The other person keeps theirs. */
+  @Delete('conversations/:id')
+  remove(@Request() req, @Param('id') id: string) {
+    return this.messagesService.deleteForMe(req.user.userId, id);
   }
 }

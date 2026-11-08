@@ -32,6 +32,7 @@ export interface ThreadMessage {
   text: string;
   createdAt: Date;
   mine: boolean;
+  deleted: boolean;
 }
 
 function assertObjectId(id: string, label = 'id') {
@@ -239,17 +240,139 @@ export class MessagesService {
     return {
       _id: message._id.toString(),
       senderRole: message.senderRole,
-      text: message.text,
+      text: message.deletedForEveryone ? '' : message.text,
       createdAt: message.get('createdAt'),
       mine: message.senderId.toString() === userId,
+      deleted: !!message.deletedForEveryone,
     };
+  }
+
+  /** When did this person last "delete" the chat? Messages before that are hidden for them only. */
+  private clearedAtFor(conversation: ConversationDocument, side: Side): Date | null {
+    const value = side === 'artisan' ? conversation.artisanClearedAt : conversation.customerClearedAt;
+    return value ?? null;
+  }
+
+  /** A deleted chat stays hidden until a newer message arrives. */
+  private isVisible(conversation: ConversationDocument, side: Side) {
+    if (!conversation.lastMessageAt) return false;
+    const clearedAt = this.clearedAtFor(conversation, side);
+    return !clearedAt || conversation.lastMessageAt > clearedAt;
+  }
+
+  /**
+   * "Delete chat" for ONE side only (like WhatsApp). The other person keeps their copy.
+   * If both sides delete, the conversation and its messages are removed for good.
+   */
+  async deleteForMe(userId: string, conversationId: string) {
+    const { conversation, side } = await this.loadConversation(conversationId, userId);
+    const now = new Date();
+
+    const mine = side === 'artisan' ? 'artisanClearedAt' : 'customerClearedAt';
+    const theirs = side === 'artisan' ? conversation.customerClearedAt : conversation.artisanClearedAt;
+
+    const lastAt = conversation.lastMessageAt;
+    const otherSideGone = !!theirs && !!lastAt && lastAt <= theirs;
+
+    if (otherSideGone) {
+      await this.messageModel.deleteMany({ conversationId: conversation._id });
+      await this.conversationModel.deleteOne({ _id: conversation._id });
+      return { deleted: true };
+    }
+
+    await this.conversationModel.updateOne(
+      { _id: conversation._id },
+      {
+        $set: {
+          [mine]: now,
+          ...(side === 'artisan' ? { artisanUnread: 0 } : { customerUnread: 0 }),
+        },
+      },
+    );
+
+    return { deleted: true };
+  }
+
+  /** "Delete chat for everyone": the conversation and every message in it are removed for both sides. */
+  async deleteConversationForEveryone(userId: string, conversationId: string) {
+    const { conversation } = await this.loadConversation(conversationId, userId);
+
+    await this.messageModel.deleteMany({ conversationId: conversation._id });
+    await this.conversationModel.deleteOne({ _id: conversation._id });
+
+    return { deleted: true };
+  }
+
+  /** "Delete for me" on a single message. The other person still sees it. */
+  async deleteMessageForMe(userId: string, messageId: string) {
+    assertObjectId(messageId, 'message id');
+
+    const message = await this.messageModel.findById(messageId);
+    if (!message) throw new NotFoundException('Message not found');
+
+    // Only people inside this conversation may touch its messages.
+    await this.loadConversation(message.conversationId.toString(), userId);
+
+    await this.messageModel.updateOne(
+      { _id: message._id },
+      { $addToSet: { deletedFor: new Types.ObjectId(userId) } },
+    );
+
+    return { deleted: true };
+  }
+
+  /**
+   * "Delete for everyone": only the sender, and only within 48 hours (like WhatsApp).
+   * The text is wiped for both sides and a "This message was deleted" notice stays.
+   */
+  async deleteMessageForEveryone(userId: string, messageId: string) {
+    assertObjectId(messageId, 'message id');
+
+    const message = await this.messageModel.findById(messageId);
+    if (!message) throw new NotFoundException('Message not found');
+
+    const { conversation } = await this.loadConversation(
+      message.conversationId.toString(),
+      userId,
+    );
+
+    if (message.senderId.toString() !== userId) {
+      throw new ForbiddenException('You can only delete your own messages for everyone');
+    }
+
+    const createdAt = new Date(message.get('createdAt')).getTime();
+    if (Date.now() - createdAt > 48 * 60 * 60 * 1000) {
+      throw new BadRequestException('This message is too old to delete for everyone');
+    }
+
+    await this.messageModel.updateOne(
+      { _id: message._id },
+      { $set: { deletedForEveryone: true, text: '' } },
+    );
+
+    // If it was the latest message, fix the preview in the inbox list.
+    const last = conversation.lastMessageAt ? conversation.lastMessageAt.getTime() : 0;
+    if (createdAt >= last - 1000) {
+      await this.conversationModel.updateOne(
+        { _id: conversation._id },
+        { $set: { lastMessage: '🚫' } },
+      );
+    }
+
+    return { deleted: true };
   }
 
   /** Opening a thread marks it as read for the person looking at it. */
   private async openThread(conversation: ConversationDocument, side: Side, userId: string) {
+    const clearedAt = this.clearedAtFor(conversation, side);
+
     const [messages] = await Promise.all([
       this.messageModel
-        .find({ conversationId: conversation._id })
+        .find({
+          conversationId: conversation._id,
+          deletedFor: { $ne: new Types.ObjectId(userId) },
+          ...(clearedAt ? { createdAt: { $gt: clearedAt } } : {}),
+        })
         .sort({ createdAt: 1 })
         .limit(300),
       this.conversationModel.updateOne(
@@ -302,7 +425,7 @@ export class MessagesService {
       .limit(50);
 
     return this.summarise(
-      conversations.filter((c) => !!c.lastMessageAt),
+      conversations.filter((c) => this.isVisible(c, side)),
       side,
     );
   }
@@ -316,10 +439,12 @@ export class MessagesService {
         ? { artisanUserId: new Types.ObjectId(userId) }
         : { customerId: new Types.ObjectId(userId) };
 
-    const unread = await this.conversationModel
-      .find({ ...owner, [field]: { $gt: 0 } })
-      .sort({ lastMessageAt: -1 })
-      .limit(20);
+    const unread = (
+      await this.conversationModel
+        .find({ ...owner, [field]: { $gt: 0 } })
+        .sort({ lastMessageAt: -1 })
+        .limit(20)
+    ).filter((c) => this.isVisible(c, side));
 
     const items = await this.summarise(unread, side);
     const count = unread.reduce((sum, c) => sum + (c as any)[field], 0);
